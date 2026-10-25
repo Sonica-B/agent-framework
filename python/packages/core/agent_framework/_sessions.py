@@ -2148,7 +2148,10 @@ class FileSessionStore(SessionStore):
 
         def _write() -> None:
             with file_lock:
-                temp_path = file_path.with_name(f".{file_path.name}.{uuid.uuid4().hex}.tmp")
+                # A fixed-length temp name, independent of the session ID, so a long ID whose
+                # snapshot path fits within the Windows MAX_PATH limit is not pushed over it by
+                # its temp file (FileCheckpointStorage names its temp files the same way).
+                temp_path = file_path.with_name(f".maf-session-{uuid.uuid4().hex}.tmp")
                 try:
                     temp_path.write_bytes(serialized)
                     os.replace(temp_path, file_path)

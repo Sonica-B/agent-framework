@@ -3,6 +3,7 @@
 import asyncio
 import json
 import math
+import os
 import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -1243,6 +1244,27 @@ class TestFileSessionStore:
         assert stored.session_id == "second"
         temp_files = await asyncio.to_thread(lambda: [*tmp_path.glob("*.tmp"), *tmp_path.glob(".*.tmp")])
         assert not temp_files
+
+    async def test_set_temp_file_name_does_not_grow_with_session_id(self, tmp_path: Path) -> None:
+        # A temp name derived from the snapshot name adds 38 characters, which pushed a
+        # maximum-length session ID over the Windows MAX_PATH limit even when its snapshot fit.
+        store = FileSessionStore(tmp_path)
+        long_session_id = "x" * FileSessionStore.MAX_SESSION_ID_LENGTH
+
+        with patch("agent_framework._sessions.os.replace", wraps=os.replace) as replace_mock:
+            await store.set("s", AgentSession(session_id="short"))
+            await store.set(long_session_id, AgentSession(session_id="long"))
+
+        (short_temp, _), (long_temp, long_snapshot) = (
+            (Path(call.args[0]), Path(call.args[1])) for call in replace_mock.call_args_list
+        )
+        assert long_snapshot == store._session_file_path(long_session_id)
+        assert long_temp.parent == long_snapshot.parent
+        assert len(long_temp.name) == len(short_temp.name)
+        assert len(str(long_temp)) < len(str(long_snapshot))
+        restored = await store.get(long_session_id)
+        assert restored is not None
+        assert restored.session_id == "long"
 
     async def test_corrupt_session_file_is_quarantined_and_retry_returns_none(self, tmp_path: Path) -> None:
         store = FileSessionStore(tmp_path)
